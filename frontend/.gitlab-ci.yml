@@ -1,0 +1,73 @@
+stages:
+  - build
+  - dockerize
+  - deploy
+build-job:
+  image: node:latest
+  stage: build
+  only:
+    - develop
+    - main
+  cache:
+    key:
+      files:
+        - package-lock.json
+      prefix: npm
+    paths:
+      - node_modules/
+  script:
+    - npm install
+    - if [ "$CI_COMMIT_REF_NAME" = "main" ]; then npm run build-prod; else npm run build-dev; fi
+  artifacts:
+    paths:
+      - dist
+    expire_in: 1 hour
+dockerize-job:
+  image: docker:24.0.5
+  stage: dockerize
+  only:
+    - develop
+    - main
+  services:
+    - docker:24.0.5-dind
+  needs:
+    - build-job
+  before_script:
+    - echo $DOCKER_PASSWORD | docker login -u "$DOCKER_USER" --password-stdin > /dev/null
+  script:
+    - |-
+      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
+        TAG="production"
+      else
+        TAG="develop"
+      fi
+    - echo $DOCKER_REGISTRY_VUE:$TAG
+    - echo $CI_COMMIT_REF_NAME
+    - docker build --tag $DOCKER_REGISTRY_VUE:$TAG .
+    - docker push $DOCKER_REGISTRY_VUE:$TAG
+  after_script:
+    - docker rmi &(docker images -f "dangling=true" -q)
+    - docker logout
+deploy-develop:
+  stage: deploy
+  only:
+    - develop
+  needs:
+    - dockerize-job
+  tags:
+    - dev
+  before_script:
+    - mkdir -p ~/.ssh
+    - eval $(ssh-agent -s)
+    - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+    - chmod 600 "$SSH_PRIVATE_KEY"
+    - ssh-add "$SSH_PRIVATE_KEY"
+  script:
+    - ssh -p 22 tennod@192.168.0.158 "echo $DOCKER_PASSWORD | docker login -u "$DOCKER_USER" --password-stdin > /dev/null
+      && docker pull $DOCKER_REGISTRY_VUE:develop
+      && docker stop tcrmvue || echo No running container to stop
+      && docker rm tcrmvue || echo No container to remove
+      && docker run -d --name tcrmvue -p 9070:80 $DOCKER_REGISTRY_VUE:develop
+      && dangling_images=\$(docker images -f 'dangling=true' -q)
+      && if [ -n '\$dangling_images' ]; then docker rmi \$dangling_images; fi
+      && docker logout"

@@ -1,0 +1,12 @@
+# Stage 1: Build the application
+FROM gradle:8.6-jdk17 AS build
+WORKDIR /app
+COPY . .
+RUN gradle clean build
+
+# Stage 2: Package the application
+FROM openjdk:17-jdk-slim
+WORKDIR /app
+COPY --from=build /app/build/libs/CRM.MC-0.0.1-SNAPSHOT.jar /app/CRM.MC-0.0.1.jar
+EXPOSE 9080
+CMD ["sh", "-c", "java -Dspring.profiles.active=${SPRING_PROFILE} -jar /app/CRM.MC-0.0.1.jar"]

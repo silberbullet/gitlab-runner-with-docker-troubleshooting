@@ -1,0 +1,72 @@
+stages:
+  - build
+  - dockerize
+  - deploy
+
+cache:
+  paths:
+    - .gradle/caches/
+    - .gradle/wrapper/
+  key: "$CI_COMMIT_REF_SLUG"
+  policy: pull-push
+
+build-job:
+  stage: build
+  image: gradle:8.7-jdk17
+  script:
+    - gradle clean build
+  cache:
+    policy: pull-push
+  only:
+    - develop
+
+dockerize-job:
+  stage: dockerize
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  only:
+    - develop
+    - main
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin > /dev/null
+  script:
+    - |-
+      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
+        TAG="production"
+      else
+        TAG="develop"
+      fi
+    - docker build --build-arg SPRING_PROFILE=$SPRING_PROFILE -t $IMAGE_NAME:$TAG .
+    - docker tag $IMAGE_NAME:$TAG $CI_REGISTRY_REPO:$TAG
+    - docker push $CI_REGISTRY_REPO:$TAG
+  after_script:
+    - docker logout
+
+deploy-job:
+  stage: deploy
+  tags:
+    - dev
+  only:
+    - develop
+  before_script:
+    - mkdir -p ~/.ssh
+    - eval $(ssh-agent -s)
+    - '[[ -f /.dockerenv ]] && echo -e "Host *\n\tStrictHostKeyChecking no\n\n" > ~/.ssh/config'
+    - chmod 600 "$SSH_PRIVATE_KEY"
+    - ssh-add "$SSH_PRIVATE_KEY"
+  script:
+    - |-
+      if [ "$CI_COMMIT_REF_NAME" = "main" ]; then
+        TAG="production"
+      else
+        TAG="develop"
+      fi
+    - ssh -p 22 $REMOTE_USER@$REMOTE_URL "echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin > /dev/null
+      && docker pull $CI_REGISTRY_REPO:$TAG
+      && docker stop $CONTAINER_NAME || echo No running container to stop
+      && docker rm $CONTAINER_NAME || echo No container to remove
+      && docker run -d --name $CONTAINER_NAME -e SPRING_PROFILE=$SPRING_PROFILE -p 9080:9080 $CI_REGISTRY_REPO:$TAG
+      && dangling_images=\$(docker images -f 'dangling=true' -q)
+      && if [ -n '\$dangling_images' ]; then docker rmi \$dangling_images; fi
+      && docker logout"

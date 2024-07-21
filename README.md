@@ -43,8 +43,7 @@
 
 **참고**: 192.168.0.xxx : 5080 포트번호 실행되고 있는 GitLab 서버를 일반 도메인 주소로 접속이 가능하기 위해 포트포워딩 설정
 </br>
-
-**GitLab 서버와 개발계 CRM 서버를 분리한 이유**
+[GitLab 서버와 개발계 CRM 서버를 분리한 이유](#-TroubleShooting)
 
 ## ▶ 배포 전략
 
@@ -82,4 +81,25 @@ Dangling Image는 이미지 빌드 및 Pull 시 새로운 버전에 이미지가
 
 2. **포트포워딩이 설정 된 서버와 외부 API 연동 이슈**
 
-현재는 개발계를 구축하기 위해 서버실에 PC 2대를 이용하여 형상관리와 개발계 접속용으로 두고 있지만, 초기에는 한 PC에 GitLab, Spring, Vue, Redis, Runner가 Container로 띄워져 있었다.
+![PPT_3](https://github.com/user-attachments/assets/97e2db75-aa45-4e9a-bb29-178711549a65)
+
+현재는 개발계를 구축하기 위해 서버실에 PC 2대를 이용하여 `형상관리`와 `개발계 접속용`으로 구축 하였지만, 초기에는 한 PC에 GitLab, Spring, Vue, Redis, Runner가 Container로 띄워져 있었다.
+
+    - **포트포워딩 설정이 필요했던 이유**
+        - GitLab에서 Issue와 To-Do List 페이지가 :80 포트로 호출 되는 이슈가 있다. :5080 포트로 띄우게 되면 페이지 진입이 불가하였기에, 차라리 :80 포트를 :5080으로 리다이렉트 시켜 문제를 해결 하였다.
+
+그런데 :80 -> :5080으로 리다이렉트가 문제가 되는 상황이 발생 하였다. **Spring Boot 쪽에서 외부 API를 호출 시 GitLab 초기 페이지로 호출되는 현상이 일어났다.** </br>
+
+원인은 네트워크 흐름에서 찾을 수 있었다.
+
+```mermaid
+flowchart LR
+    A[Spring Boot Container] -->|Docker Bridge| B[개발PC 내부IP]
+    B -->|NAT| C[외부 IP]
+    C -->|Open API Call| D[Open API]
+    D -->|응답 반환| C[개발PC 외부IP]
+    C -->|NAT :80| B
+    B -->|:80->:5080 포트포워딩|E[GitLab Container]
+```
+
+Nginx 리버스 프록시 설정으로 해결하는 방법도 있지만, **RAM 메모리 부족 현상** 발생한 요인 때문에 개발계 용 PC 하나를 더 추가하여 형상관리와 분리를 시키는 것이였다. Docker Container가 돌아가면 RAM을 사용하게 되는데, **GitLab Container가 약 60% 이상**을 사용하였다. CPU 점유율도 높아지게 되면 Runner 쪽에도 CI/CD 작업이 느려지는 것을 확인 하였다. 그렇게 하여 개발 PC 하나를 더 구축하였고, 외부 API 연동 이슈 해결과 DevOpS 환경을 최적화 할 수 있었다.
