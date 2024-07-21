@@ -78,6 +78,7 @@ Dangling Image는 이미지 빌드 및 Pull 시 새로운 버전에 이미지가
 && if [ -n '\$dangling_images' ]; then docker rmi \$dangling_images; fi
 
 ```
+---
 
 2. **포트포워딩이 설정 된 서버와 외부 API 연동 이슈**
 
